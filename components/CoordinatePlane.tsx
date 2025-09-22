@@ -7,6 +7,7 @@ import {
   CartesianGrid,
   ReferenceLine,
   ReferenceDot,
+  Customized,
 } from 'recharts';
 import { Axis } from '../types';
 
@@ -14,7 +15,9 @@ interface CoordinatePlaneProps {
   symmetryAxis: Axis;
   symmetryValue: number;
   basePoint: { x: number; y: number } | null;
+  previewPoint: { x: number; y: number } | null;
   playerTwoPoint: { x: number; y: number } | null;
+  playerTwoPreviewPoint: { x: number; y: number } | null;
   missileTargetPoint: { x: number; y: number } | null;
   correctSymmetricPoint: { x: number; y: number } | null;
   missilePosition: { x: number; y: number } | null;
@@ -26,6 +29,7 @@ interface CoordinatePlaneProps {
   showGraphics: boolean;
   tankDirection: 'left' | 'right';
   launcherDirection: 'left' | 'right';
+  previewLauncherDirection: 'left' | 'right';
 }
 
 const toPersianDigits = (n: number | string): string => {
@@ -44,10 +48,10 @@ const Tank: React.FC<any> = ({ cx, cy, isDark, direction }) => {
 
     const scaleX = direction === 'left' ? -1 : 1;
     // Adjust translateX to keep the tank centered after flipping
-    const translateX = direction === 'left' ? cx + 12 : cx - 12;
+    const translateX = direction === 'left' ? cx + 22 : cx - 22;
 
     return (
-        <g transform={`translate(${translateX}, ${cy - 8}) scale(${scaleX}, 1) scale(1.2)`}>
+        <g transform={`translate(${translateX}, ${cy - 18}) scale(${scaleX}, 1) scale(2.0)`}>
             {/* Treads */}
             <rect x="0" y="9" width="20" height="7" rx="2" fill={treadFill} />
             <circle cx="4" cy="12.5" r="2" fill={detailsFill} />
@@ -79,10 +83,10 @@ const MissileLauncher: React.FC<any> = ({ cx, cy, isDark, direction }) => {
 
     // Base SVG is drawn facing right. Flip it if the direction is 'left'.
     const scaleX = direction === 'left' ? -1 : 1;
-    const translateX = direction === 'left' ? cx + 12 : cx - 12;
+    const translateX = direction === 'left' ? cx + 24 : cx - 24;
     
     return (
-        <g transform={`translate(${translateX}, ${cy - 11}) scale(${scaleX}, 1) scale(1.1)`}>
+        <g transform={`translate(${translateX}, ${cy - 27}) scale(${scaleX}, 1) scale(2.0)`}>
             {/* Wheels */}
             <circle cx="4" cy="18" r="3" fill={wheelFill} />
             <circle cx="12" cy="18" r="3" fill={wheelFill} />
@@ -112,15 +116,18 @@ const CustomMissile: React.FC<any> = ({ cx, cy, angle }) => {
   const x = cx;
   const y = cy;
 
-  // SVG path for the missile shape. Centered at (0,0).
+  // SVG path for the missile shape. Centered at (0,0). Tip is at (0, -14), so it points UP.
   const missilePath = "M-12 6 L0 -14 L12 6 C8 10, -8 10, -12 6 Z";
   const flamePath = "M-7 6 C-4 15, 4 15, 7 6 C 5 6, -5 6, -7 6 Z";
   
-  // Add 90 degrees because the missile shape is drawn pointing upwards.
-  const rotation = angle + 90;
+  // Convert angle for correct SVG rotation.
+  // The missile SVG path points UP. The 'angle' is from atan2 (CCW, 0 is right).
+  // SVG rotation is CW. The formula `90 - angle` correctly aligns the UP-pointing missile
+  // with the trajectory angle.
+  const rotation = 90 - angle;
 
   return (
-    <g transform={`translate(${x}, ${y}) rotate(${rotation})`}>
+    <g transform={`translate(${x}, ${y}) rotate(${rotation}) scale(1.5)`}>
         <path d={missilePath} fill="#94a3b8" stroke="#e2e8f0" strokeWidth="1" />
         <path d={flamePath} fill="#f59e0b" />
     </g>
@@ -136,7 +143,13 @@ const CustomExplosion: React.FC<any> = ({ cx, cy, progress, isHit }) => {
       
     if (progress === null || progress === 0) return null;
 
-    const color = isHit ? '#22c55e' : '#ef4444';
+    const missColor = '#ef4444'; // red-500
+    const hitOuterColor = '#f97316'; // orange-500
+    const hitInnerColor = '#f59e0b'; // amber-500
+
+    const outerColor = isHit ? hitOuterColor : missColor;
+    const innerColor = isHit ? hitInnerColor : missColor;
+
     const numSpikes = 8;
     const maxRadius = 50;
     
@@ -154,14 +167,72 @@ const CustomExplosion: React.FC<any> = ({ cx, cy, progress, isHit }) => {
 
     return (
         <g opacity={opacity} style={{ transformOrigin: `${x}px ${y}px` }}>
-            <polygon points={points} fill={color} />
-            <circle cx={x} cy={y} r={currentRadius / 2.5} fill="white" />
+            <polygon points={points} fill={outerColor} />
+            <circle cx={x} cy={y} r={currentRadius / 1.8} fill={innerColor} />
+            <circle cx={x} cy={y} r={currentRadius / 3} fill="#fff7ed" />
         </g>
     );
 };
 
+const renderSymmetryLines = (props: any) => {
+  const { 
+    xScale, yScale, 
+    symmetryAxis, symmetryValue, 
+    basePoint, previewPoint, 
+    playerTwoPoint, playerTwoPreviewPoint, 
+    theme 
+  } = props;
+
+  if (!xScale || !yScale) {
+    return null;
+  }
+
+  const isDark = theme === 'dark';
+  const baseLineColor = isDark ? 'rgba(239, 68, 68, 0.5)' : 'rgba(239, 68, 68, 0.7)';
+  const playerTwoLineColor = isDark ? 'rgba(59, 130, 246, 0.5)' : 'rgba(59, 130, 246, 0.7)';
+  const previewOpacity = 0.6;
+
+  const lines: React.ReactNode[] = [];
+
+  const drawLine = (point: {x: number, y: number} | null, color: string, isPreview: boolean) => {
+    if (!point) return;
+
+    const start = {
+      x: xScale(point.x),
+      y: yScale(point.y),
+    };
+
+    const end = {
+      x: symmetryAxis === Axis.Y ? xScale(symmetryValue) : start.x,
+      y: symmetryAxis === Axis.X ? yScale(symmetryValue) : start.y,
+    };
+    
+    lines.push(
+      <line
+        key={`line-${point.x}-${point.y}-${isPreview}`}
+        x1={start.x}
+        y1={start.y}
+        x2={end.x}
+        y2={end.y}
+        stroke={color}
+        strokeWidth={2}
+        strokeDasharray="4 4"
+        opacity={isPreview ? previewOpacity : 1}
+      />
+    );
+  };
+  
+  drawLine(previewPoint, baseLineColor, true);
+  drawLine(basePoint, baseLineColor, false);
+  drawLine(playerTwoPreviewPoint, playerTwoLineColor, true);
+  drawLine(playerTwoPoint, playerTwoLineColor, false);
+  
+  return <g className="recharts-layer">{lines}</g>;
+};
+
 // Ticks array is defined outside the component to prevent re-creation on each render.
-const ticks = Array.from({ length: 21 }, (_, i) => i);
+const yTicks = Array.from({ length: 11 }, (_, i) => i); // 0-10 for Y axis
+const xTicks = Array.from({ length: 17 }, (_, i) => i); // 0-16 for X axis
 
 // FIX: Define LabelPosition as it is not exported from recharts.
 type LabelPosition = 'top' | 'bottom' | 'insideBottom' | 'insideLeft' | 'insideRight';
@@ -170,7 +241,9 @@ const CoordinatePlane: React.FC<CoordinatePlaneProps> = ({
   symmetryAxis, 
   symmetryValue, 
   basePoint,
+  previewPoint,
   playerTwoPoint,
+  playerTwoPreviewPoint,
   missileTargetPoint,
   correctSymmetricPoint,
   missilePosition,
@@ -182,195 +255,263 @@ const CoordinatePlane: React.FC<CoordinatePlaneProps> = ({
   showGraphics,
   tankDirection,
   launcherDirection,
+  previewLauncherDirection
 }) => {
-  const domain: [number, number] = [0, 20];
+  const yDomain: [number, number] = [0, 10];
+  const xDomain: [number, number] = [0, 16];
   const isDark = theme === 'dark';
 
   // Theme-based colors
-  const gridColor = isDark ? 'rgba(74, 222, 128, 0.2)' : 'rgba(120, 113, 108, 0.2)'; // stone-500
-  const axisTextColor = isDark ? '#94a3b8' : '#57534e'; // stone-600
-  const axisLineColor = isDark ? '#64748b' : '#a8a29e'; // stone-400
-  const axisLabelColor = isDark ? '#64748b' : '#78716c'; // stone-500
+  const gridColor = isDark ? 'rgba(203, 213, 225, 0.7)' : 'rgba(0, 0, 0, 0.8)';
+  const axisTextColor = isDark ? '#cbd5e1' : '#3f3f46';
+  const axisLineColor = isDark ? '#9ca3af' : '#000000'; // dark: gray-400, light: black
 
   // --- Smart Label Positioning Logic ---
-  const arePointsClose = (p1: {x:number, y:number}, p2: {x:number, y:number} | null) => {
-    if (!p2) return false;
+  const arePointsClose = (p1: { x: number; y: number } | null, p2: { x: number; y: number } | null) => {
+    if (!p1 || !p2) return false;
     const dx = Math.abs(p1.x - p2.x);
     const dy = Math.abs(p1.y - p2.y);
-    return dx < 3 && dy < 3;
+    return dx < 3.5 && dy < 3.5;
   };
 
-  const baseLabel: { position: LabelPosition; dy: number } = { position: 'top', dy: -20 };
-  
-  let playerTwoLabel: { position: LabelPosition, dy: number } = { position: 'top', dy: -22 };
-  if (basePoint && arePointsClose(basePoint, playerTwoPoint)) {
-      playerTwoLabel = { position: 'bottom', dy: 28 };
+  let baseLabel = { position: 'top' as LabelPosition, dy: -20 };
+  let playerTwoLabel = { position: 'top' as LabelPosition, dy: -22 };
+  let correctPointLabel = { position: 'top' as LabelPosition, dy: -12 };
+
+  // Resolve base vs playerTwo conflict
+  if (arePointsClose(basePoint, playerTwoPoint)) {
+    playerTwoLabel = { position: 'bottom', dy: 28 };
   }
-  
-  let correctPointLabel: { position: LabelPosition, dy: number } = { position: 'top', dy: -12 };
-  if (correctSymmetricPoint) {
-      if (arePointsClose(correctSymmetricPoint, basePoint)) {
+
+  // Resolve correct point conflicts
+  if (correctSymmetricPoint && gameStatus === 'result' && !isHit) {
+    const isCloseToBase = arePointsClose(correctSymmetricPoint, basePoint);
+    const isCloseToP2 = arePointsClose(correctSymmetricPoint, playerTwoPoint);
+
+    if (isCloseToBase && baseLabel.position === 'top') {
+      // Base is top, so correct must go bottom.
+      correctPointLabel = { position: 'bottom', dy: 20 };
+    } else if (isCloseToP2 && playerTwoLabel.position === 'top') {
+      // P2 is top, so correct must go bottom.
+      correctPointLabel = { position: 'bottom', dy: 20 };
+    }
+    
+    // If the resolved position of 'correct' conflicts with the resolved position of 'playerTwo'.
+    // This happens if basePoint is far away, but p2 and correct are close (both would try for 'top').
+    // Or if all three are close, base is top, p2 is bottom, and correct also wants to be bottom.
+    if (isCloseToP2 && correctPointLabel.position === playerTwoLabel.position) {
+       // Conflict! They both want 'top' or 'bottom'.
+       // Let P2 keep its spot, and force 'correct' to the opposite side.
+       if (playerTwoLabel.position === 'top') {
           correctPointLabel = { position: 'bottom', dy: 20 };
-      }
-      if (playerTwoLabel.position === 'top' && arePointsClose(correctSymmetricPoint, playerTwoPoint)) {
-        correctPointLabel = { position: 'bottom', dy: 20 };
-      }
+       } else { // playerTwoLabel.position is 'bottom'
+          correctPointLabel = { position: 'top', dy: -12 };
+       }
+    }
   }
   // --- End of Smart Label Logic ---
 
   return (
-    <div className="missile-chart-container bg-slate-200/60 dark:bg-slate-900/70 backdrop-blur-sm p-4 rounded-lg border border-stone-500/30 dark:border-green-500/30 shadow-lg w-full aspect-square max-w-2xl mx-auto shadow-stone-500/10 dark:shadow-green-500/10">
-      <ResponsiveContainer width="100%" height="100%">
-        <ScatterChart
-          margin={{
-            top: 25,
-            right: 25,
-            bottom: 25,
-            left: 25,
-          }}
-        >
-          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-          
-          <XAxis
-            type="number"
-            dataKey="x"
-            name="طول"
-            domain={domain}
-            ticks={ticks}
-            interval={0}
-            tickFormatter={(tick) => toPersianDigits(tick)}
-            tick={{ fill: axisTextColor, fontSize: 10, dy: 5 }}
-            label={{ value: 'محور طول', position: 'insideBottom', offset: -5, dy:10, fill: axisLabelColor }}
-            stroke={axisLineColor}
-            allowDataOverflow={true}
-            axisLine={{ stroke: axisLineColor, strokeWidth: 1.5 }}
-          />
+    <div className="missile-chart-container bg-slate-200/60 dark:bg-gray-900/80 backdrop-blur-sm p-4 rounded-lg border border-stone-500/40 dark:border-green-500/50 shadow-lg w-full h-full shadow-stone-500/20 dark:shadow-green-500/20 flex items-center justify-center">
+      <div className="w-full max-h-full aspect-square">
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart
+            margin={{
+              top: 20,
+              right: 30,
+              bottom: 20,
+              left: 30,
+            }}
+          >
+            <CartesianGrid stroke={gridColor} strokeWidth={1.5} />
+
+            {/* Symmetry Visualization Lines */}
+            <Customized
+              component={renderSymmetryLines}
+              symmetryAxis={symmetryAxis}
+              symmetryValue={symmetryValue}
+              basePoint={basePoint}
+              previewPoint={previewPoint}
+              playerTwoPoint={playerTwoPoint}
+              playerTwoPreviewPoint={playerTwoPreviewPoint}
+              theme={theme}
+            />
             
-          <YAxis
-            type="number"
-            dataKey="y"
-            name="عرض"
-            domain={domain}
-            ticks={ticks}
-            interval={0}
-            tickFormatter={(tick) => toPersianDigits(tick)}
-            tick={{ fill: axisTextColor, fontSize: 12, dx: -10 }}
-            label={{ value: 'محور عرض', angle: -90, position: 'insideLeft', offset: 0, dx: -5, fill: axisLabelColor, style: {textAnchor: 'middle'} }}
-            stroke={axisLineColor}
-            allowDataOverflow={true}
-            axisLine={{ stroke: axisLineColor, strokeWidth: 1.5 }}
-          />
-
-          {/* Line of Symmetry */}
-          {symmetryAxis === Axis.Y && (
-            <ReferenceLine
-              x={symmetryValue}
-              stroke="#f43f5e"
-              strokeWidth={2}
-              strokeDasharray="5 5"
-              label={{ value: `طول = ${toPersianDigits(symmetryValue)}`, position: 'top', fill: '#f43f5e', fontWeight: 'bold' }}
-              ifOverflow="visible"
+            <XAxis
+              type="number"
+              dataKey="x"
+              name="طول"
+              domain={xDomain}
+              ticks={xTicks}
+              interval={0}
+              tickFormatter={(tick) => toPersianDigits(tick)}
+              tick={{ fill: axisTextColor, fontSize: 24, dy: 10 }}
+              stroke={axisLineColor}
+              allowDataOverflow={true}
+              axisLine={symmetryAxis === Axis.X && symmetryValue === 0 ? false : { stroke: axisLineColor, strokeWidth: 1.5 }}
             />
-          )}
-          {symmetryAxis === Axis.X && (
-            <ReferenceLine
-              y={symmetryValue}
-              stroke="#f43f5e"
-              strokeWidth={2}
-              strokeDasharray="5 5"
-              label={{ value: `عرض = ${toPersianDigits(symmetryValue)}`, position: 'insideRight', fill: '#f43f5e', fontWeight: 'bold' }}
-              ifOverflow="visible"
+              
+            <YAxis
+              type="number"
+              dataKey="y"
+              name="عرض"
+              domain={yDomain}
+              ticks={yTicks}
+              interval={0}
+              tickFormatter={(tick) => toPersianDigits(tick)}
+              tick={{ fill: axisTextColor, fontSize: 24, dx: -25 }}
+              stroke={axisLineColor}
+              allowDataOverflow={true}
+              axisLine={symmetryAxis === Axis.Y && symmetryValue === 0 ? false : { stroke: axisLineColor, strokeWidth: 1.5 }}
             />
-          )}
 
-          {/* War Base Point (Player 1) */}
-          {basePoint && (
-            <ReferenceDot
-              x={basePoint.x}
-              y={basePoint.y}
-              r={showGraphics ? 0 : 8}
-              fill={isDark ? '#4ade80' : '#44403c'}
-              ifOverflow="visible"
-              shape={showGraphics ? <Tank isDark={isDark} direction={tankDirection} /> : undefined}
-              label={{
-                value: `پایگاه ۱ (${toPersianDigits(basePoint.x)}, ${toPersianDigits(basePoint.y)})`,
-                position: baseLabel.position,
-                dy: baseLabel.dy,
-                fill: isDark ? '#4ade80' : '#44403c', // stone-700
-                fontWeight: 'bold',
-                fontSize: 12,
-                style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
-              }}
-            />
-          )}
+            {/* Line of Symmetry */}
+            {symmetryAxis === Axis.Y && (
+              <ReferenceLine
+                x={symmetryValue}
+                stroke="#f43f5e"
+                strokeWidth={3}
+                ifOverflow="visible"
+              />
+            )}
+            {symmetryAxis === Axis.X && (
+              <ReferenceLine
+                y={symmetryValue}
+                stroke="#f43f5e"
+                strokeWidth={3}
+                ifOverflow="visible"
+              />
+            )}
 
-          {/* Player 2's Shot Point */}
-          {playerTwoPoint && (
-            <ReferenceDot
-              x={playerTwoPoint.x}
-              y={playerTwoPoint.y}
-              r={showGraphics ? 0 : 8}
-              fill={isDark ? '#fbbf24' : '#d97706'}
-              ifOverflow="visible"
-              shape={showGraphics ? <MissileLauncher isDark={isDark} direction={launcherDirection} /> : undefined}
-              label={{
-                value: `شلیک ۲ (${toPersianDigits(playerTwoPoint.x)}, ${toPersianDigits(playerTwoPoint.y)})`,
-                position: playerTwoLabel.position,
-                dy: playerTwoLabel.dy,
-                fill: isDark ? '#fbbf24' : '#d97706',
-                fontWeight: 'bold',
-                fontSize: 12,
-                style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
-              }}
-            />
-          )}
+            {/* Preview for Player 1's Base */}
+            {!basePoint && previewPoint && (
+                <ReferenceDot
+                    x={previewPoint.x}
+                    y={previewPoint.y}
+                    r={10}
+                    fill={isDark ? 'rgba(248, 113, 113, 0.5)' : 'rgba(220, 38, 38, 0.5)'}
+                    ifOverflow="visible"
+                    label={{
+                        value: `پایگاه`,
+                        position: 'top',
+                        dy: -20,
+                        fill: isDark ? 'rgba(248, 113, 113, 0.6)' : 'rgba(239, 68, 68, 0.6)',
+                        fontWeight: 'bold',
+                        fontSize: 20,
+                        style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
+                    }}
+                />
+            )}
 
-          {/* Missile Animation */}
-          {gameStatus === 'fired' && missilePosition && (
-             <ReferenceDot
-              x={missilePosition.x}
-              y={missilePosition.y}
-              r={0}
-              ifOverflow="visible"
-              shape={<CustomMissile angle={missileAngle} />}
-            />
-          )}
+            {/* War Base Point (Player 1) */}
+            {basePoint && (
+              <ReferenceDot
+                x={basePoint.x}
+                y={basePoint.y}
+                r={showGraphics ? 0 : 8}
+                fill={isDark ? '#f87171' : '#dc2626'}
+                ifOverflow="visible"
+                shape={showGraphics ? (props: any) => <Tank {...props} isDark={isDark} direction={tankDirection} /> : undefined}
+                label={{
+                  value: `پایگاه`,
+                  position: baseLabel.position,
+                  dy: baseLabel.dy,
+                  fill: '#ef4444',
+                  fontWeight: 'bold',
+                  fontSize: 20,
+                  style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
+                }}
+              />
+            )}
 
-          {/* Explosion / Impact Animation */}
-          {gameStatus === 'result' && missileTargetPoint && explosionProgress !== null && (
-             <ReferenceDot
-                x={missileTargetPoint.x}
-                y={missileTargetPoint.y}
+            {/* Preview for Player 2's Shot Point */}
+            {!playerTwoPoint && playerTwoPreviewPoint && basePoint && (
+                <ReferenceDot
+                    x={playerTwoPreviewPoint.x}
+                    y={playerTwoPreviewPoint.y}
+                    r={10}
+                    fill={isDark ? 'rgba(96, 165, 250, 0.5)' : 'rgba(37, 99, 235, 0.5)'}
+                    ifOverflow="visible"
+                    label={{
+                        value: `دیده بان`,
+                        position: 'top',
+                        dy: -22,
+                        fill: isDark ? 'rgba(96, 165, 250, 0.6)' : 'rgba(37, 99, 235, 0.6)',
+                        fontWeight: 'bold',
+                        fontSize: 20,
+                        style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
+                    }}
+                />
+            )}
+            
+            {/* Player 2's Shot Point */}
+            {playerTwoPoint && (
+              <ReferenceDot
+                x={playerTwoPoint.x}
+                y={playerTwoPoint.y}
+                r={showGraphics ? 0 : 8}
+                fill={isDark ? '#60a5fa' : '#2563eb'}
+                ifOverflow="visible"
+                shape={showGraphics ? (props: any) => <MissileLauncher {...props} isDark={isDark} direction={launcherDirection} /> : undefined}
+                label={{
+                  value: `دیده بان`,
+                  position: playerTwoLabel.position,
+                  dy: playerTwoLabel.dy,
+                  fill: '#3b82f6',
+                  fontWeight: 'bold',
+                  fontSize: 20,
+                  style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
+                }}
+              />
+            )}
+
+            {/* Missile Animation */}
+            {gameStatus === 'fired' && missilePosition && (
+               <ReferenceDot
+                x={missilePosition.x}
+                y={missilePosition.y}
                 r={0}
                 ifOverflow="visible"
-                shape={<CustomExplosion progress={explosionProgress} isHit={isHit} />}
-             />
-          )}
-          
-          {/* Correct Symmetric Point on Miss */}
-          {gameStatus === 'result' && !isHit && correctSymmetricPoint && (
-             <ReferenceDot
-              x={correctSymmetricPoint.x}
-              y={correctSymmetricPoint.y}
-              r={8}
-              fill="#22c55e"
-              stroke={isDark ? "#1e293b" : "#f1f5f9"}
-              strokeWidth={2}
-              ifOverflow="visible"
-              label={{
-                value: 'هدف صحیح',
-                position: correctPointLabel.position,
-                dy: correctPointLabel.dy,
-                fill: isDark ? '#4ade80' : '#16a34a',
-                fontWeight: 'bold',
-                fontSize: 12,
-                style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
-              }}
-            />
-          )}
+                shape={(props: any) => <CustomMissile {...props} angle={missileAngle} />}
+              />
+            )}
 
-        </ScatterChart>
-      </ResponsiveContainer>
+            {/* Explosion / Impact Animation */}
+            {gameStatus === 'result' && missileTargetPoint && explosionProgress !== null && (
+               <ReferenceDot
+                  x={missileTargetPoint.x}
+                  y={missileTargetPoint.y}
+                  r={0}
+                  ifOverflow="visible"
+                  shape={(props: any) => <CustomExplosion {...props} progress={explosionProgress} isHit={isHit} />}
+               />
+            )}
+            
+            {/* Correct Symmetric Point on Miss */}
+            {gameStatus === 'result' && !isHit && correctSymmetricPoint && (
+               <ReferenceDot
+                x={correctSymmetricPoint.x}
+                y={correctSymmetricPoint.y}
+                r={8}
+                fill="#22c55e"
+                stroke={isDark ? "#1e293b" : "#f1f5f9"}
+                strokeWidth={2}
+                ifOverflow="visible"
+                label={{
+                  value: 'نقطه صحیح',
+                  position: correctPointLabel.position,
+                  dy: correctPointLabel.dy,
+                  fill: isDark ? '#4ade80' : '#16a34a',
+                  fontWeight: 'bold',
+                  fontSize: 18,
+                  style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }
+                }}
+              />
+            )}
+
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 };

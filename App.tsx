@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Axis } from './types';
 import CoordinatePlane from './components/CoordinatePlane';
 import ControlPanel from './components/ControlPanel';
 
 const App: React.FC = () => {
   const [axis, setAxis] = useState<Axis>(Axis.Y);
-  const [value, setValue] = useState<number>(10);
+  const [value, setValue] = useState<number>(8); // Default to 8 for Y-axis
   const [basePoint, setBasePoint] = useState<{ x: number; y: number } | null>(null);
+  const [previewPoint, setPreviewPoint] = useState<{ x: number; y: number } | null>(null);
   const [playerTwoPoint, setPlayerTwoPoint] = useState<{ x: number; y: number } | null>(null);
+  const [playerTwoPreviewPoint, setPlayerTwoPreviewPoint] = useState<{ x: number; y: number } | null>(null);
   const [missileTargetPoint, setMissileTargetPoint] = useState<{ x: number; y: number } | null>(null);
   const [correctSymmetricPoint, setCorrectSymmetricPoint] = useState<{ x: number; y: number } | null>(null);
   const [gameStatus, setGameStatus] = useState<'idle' | 'deploying' | 'fired' | 'result'>('idle');
@@ -20,7 +22,7 @@ const App: React.FC = () => {
   const [score1, setScore1] = useState(0);
   const [score2, setScore2] = useState(0);
   const [currentTurn, setCurrentTurn] = useState(1);
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -34,9 +36,11 @@ const App: React.FC = () => {
     setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));
   };
 
-  const resetBoardForNextTurn = () => {
+  const resetBoardForNextTurn = useCallback(() => {
     setBasePoint(null);
+    setPreviewPoint(null);
     setPlayerTwoPoint(null);
+    setPlayerTwoPreviewPoint(null);
     setCorrectSymmetricPoint(null);
     setGameStatus('idle');
     setPlayerTwoConfirmed(false);
@@ -44,60 +48,64 @@ const App: React.FC = () => {
     setExplosionProgress(null);
     setMissileTargetPoint(null);
     setShowGraphics(false);
-  };
+  }, []);
 
-  const handleNextStage = () => {
+  const handleNextStage = useCallback(() => {
     setCurrentTurn(turn => turn === 1 ? 2 : 1);
     resetBoardForNextTurn();
-  };
+  }, [resetBoardForNextTurn]);
   
-  const handleFullReset = () => {
+  const handleFullReset = useCallback(() => {
     setScore1(0);
     setScore2(0);
     setCurrentTurn(1);
     resetBoardForNextTurn();
-  }
+  }, [resetBoardForNextTurn]);
 
-  const handleAxisChange = (newAxis: Axis) => {
+  const handleAxisChange = useCallback((newAxis: Axis) => {
     setAxis(newAxis);
-    if(basePoint) {
+    // Set the fixed value based on the new axis
+    const newValue = newAxis === Axis.Y ? 8 : 5;
+    setValue(newValue);
+
+    if(basePoint || previewPoint) {
         setBasePoint(null); 
+        setPreviewPoint(null);
         setPlayerTwoPoint(null);
+        setPlayerTwoPreviewPoint(null);
         setPlayerTwoConfirmed(false);
     }
-  };
+  }, [basePoint, previewPoint]);
 
-  const handleValueChange = (newValue: number) => {
-    if(basePoint) {
-        setBasePoint(null);
-        setPlayerTwoPoint(null);
-        setPlayerTwoConfirmed(false);
-    }
-    
-    if (isNaN(newValue)) {
-        setValue(1);
-        return;
-    }
-    
-    const clampedValue = Math.max(1, Math.min(19, newValue));
-    setValue(clampedValue);
-  };
+  const handleSetBasePointPreview = useCallback((point: { x: number; y: number } | null) => {
+      if (!basePoint) {
+          setPreviewPoint(point);
+      }
+  }, [basePoint]);
+  
+  const handleSetPlayerTwoPreviewPoint = useCallback((point: { x: number; y: number } | null) => {
+      if (!playerTwoPoint) { // Only show preview if the point is not confirmed
+          setPlayerTwoPreviewPoint(point);
+      }
+  }, [playerTwoPoint]);
 
-  const handleSetBasePoint = (point: { x: number; y: number }) => {
+  const handleSetBasePoint = useCallback((point: { x: number; y: number }) => {
     setBasePoint(point);
+    setPreviewPoint(null);
     setPlayerTwoPoint(null);
+    setPlayerTwoPreviewPoint(null);
     setCorrectSymmetricPoint(null);
     setGameStatus('idle');
     setPlayerTwoConfirmed(false);
     setMissilePosition(null);
     setExplosionProgress(null);
     setMissileTargetPoint(null);
-  };
+  }, []);
   
-  const handleConfirmPlayerTwoPoint = (point: { x: number; y: number }) => {
+  const handleConfirmPlayerTwoPoint = useCallback((point: { x: number; y: number }) => {
     if (!basePoint) return;
-    
     setPlayerTwoPoint(point);
+    setPlayerTwoPreviewPoint(null);
     
     const correctTarget = axis === Axis.Y
       ? { x: 2 * value - basePoint.x, y: basePoint.y }
@@ -105,220 +113,192 @@ const App: React.FC = () => {
     setCorrectSymmetricPoint(correctTarget);
 
     setPlayerTwoConfirmed(true);
-  };
+  }, [basePoint, axis, value]);
   
-  const handleFireMissile = () => {
-    if (!playerTwoPoint) return;
-    setExplosionProgress(null);
+  const handleFireMissile = useCallback(() => {
+    if (!playerTwoPoint || !basePoint) return;
     setShowGraphics(true);
+    setExplosionProgress(null);
     setGameStatus('deploying');
 
     setTimeout(() => {
         const target = axis === Axis.Y
           ? { x: 2 * value - playerTwoPoint.x, y: playerTwoPoint.y }
           : { x: playerTwoPoint.x, y: 2 * value - playerTwoPoint.y };
+        
         setMissileTargetPoint(target);
+        setMissilePosition(playerTwoPoint);
         setGameStatus('fired');
-    }, 5000);
-  };
 
-  // --- Smart Direction Logic ---
-  const tankDirection = basePoint && basePoint.x > 10 ? 'left' : 'right';
-  
-  let launcherDirection: 'left' | 'right' = 'right'; // Default direction
-  if (playerTwoPoint) {
-    if (axis === Axis.Y) { // Vertical symmetry line
-      // Face towards the symmetry line
-      launcherDirection = playerTwoPoint.x < value ? 'right' : 'left';
-    } else { // Horizontal symmetry line
-      // Face towards the center of the map
-      launcherDirection = playerTwoPoint.x > 10 ? 'left' : 'right';
-    }
-  }
-  
-  useEffect(() => {
-    if (gameStatus === 'fired' && playerTwoPoint && missileTargetPoint) {
-      const startPointOffsetX = launcherDirection === 'left' ? -0.4 : 0.4;
-      const startPointOffsetY = -0.4; // Tip of the launcher is slightly above the center
-      const startPoint = { x: playerTwoPoint.x + startPointOffsetX, y: playerTwoPoint.y + startPointOffsetY };
-
-      let animationFrameId: number;
-      const duration = 2000;
-      const startTime = performance.now();
-      
-      const distance = Math.sqrt(
-          Math.pow(missileTargetPoint.x - startPoint.x, 2) +
-          Math.pow(missileTargetPoint.y - startPoint.y, 2)
-      );
-
-      const arcHeight = Math.max(8, distance / 2); 
-      const arcYScalar = 1; // Positive for downward trajectory
-      const arcXScalar = 0;
-
-      const isMovingRight = missileTargetPoint.x > startPoint.x;
-
-      const animate = (currentTime: number) => {
-        const elapsedTime = currentTime - startTime;
-        const progress = Math.min(elapsedTime / duration, 1);
-
-        const linearX = startPoint.x + (missileTargetPoint.x - startPoint.x) * progress;
-        const linearY = startPoint.y + (missileTargetPoint.y - startPoint.y) * progress;
+        // --- Animation logic using a Cubic Bezier curve ---
+        const start = playerTwoPoint;
+        const end = target;
+        const duration = 2500; // ms
+        const startTime = performance.now();
         
-        const arcDisplacement = arcHeight * Math.sin(progress * Math.PI);
-        const currentX = linearX + arcXScalar * arcDisplacement;
-        const currentY = linearY + arcYScalar * arcDisplacement;
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // Control points for vertical launch and landing effect
+        const controlPointHeight = Math.max(2, distance / 4);
+
+        const P0 = start;
+        const P3 = end;
+        // P1 is above the start point for vertical launch effect
+        const P1 = { x: start.x, y: start.y + controlPointHeight };
+        // P2 is above the end point for vertical landing effect
+        const P2 = { x: end.x, y: end.y + controlPointHeight };
+
+        // Bezier curve function to get position at time t
+        const getCubicBezierPoint = (t: number, p0: any, p1: any, p2: any, p3: any) => {
+            const u = 1 - t;
+            const tt = t * t;
+            const uu = u * u;
+            const uuu = uu * u;
+            const ttt = tt * t;
+
+            let p = { x: 0, y: 0 };
+            p.x = uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x;
+            p.y = uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y;
+            return p;
+        };
         
-        // Dynamic Scripted rotation: Up -> (Left or Right) -> Down
-        const startAngle = -90; // Up
-        const midAngle = isMovingRight ? 0 : -180;  // Right or Left
-        const endAngle = isMovingRight ? 90 : -270;   // Down
+        // Derivative of the Bezier curve to find the tangent (for angle)
+        const getCubicBezierDerivative = (t: number, p0: any, p1: any, p2: any, p3: any) => {
+            const u = 1 - t;
+            const uu = u * u;
+            const tt = t * t;
+            
+            let p = { x: 0, y: 0 };
+            p.x = 3 * uu * (p1.x - p0.x) + 6 * u * t * (p2.x - p1.x) + 3 * tt * (p3.x - p2.x);
+            p.y = 3 * uu * (p1.y - p0.y) + 6 * u * t * (p2.y - p1.y) + 3 * tt * (p3.y - p2.y);
+            return p;
+        };
 
-        let angleDeg;
-        if (progress < 0.5) {
-          // Animate from Up to Midpoint
-          const halfProgress = progress * 2;
-          angleDeg = startAngle + (midAngle - startAngle) * halfProgress;
-        } else {
-          // Animate from Midpoint to Down
-          const halfProgress = (progress - 0.5) * 2;
-          angleDeg = midAngle + (endAngle - midAngle) * halfProgress;
-        }
-        
-        setMissileAngle(angleDeg);
-        setMissilePosition({ x: currentX, y: currentY });
+        const animateMissile = (currentTime: number) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
 
-        if (progress < 1) {
-          animationFrameId = requestAnimationFrame(animate);
-        } else {
-          setMissilePosition(null);
-          setGameStatus('result');
-        }
-      };
+            const currentPos = getCubicBezierPoint(progress, P0, P1, P2, P3);
+            setMissilePosition(currentPos);
 
-      animationFrameId = requestAnimationFrame(animate);
+            // Angle calculation for trajectory using the derivative
+            const derivative = getCubicBezierDerivative(progress, P0, P1, P2, P3);
+            const newAngle = Math.atan2(derivative.y, derivative.x) * (180 / Math.PI);
+            setMissileAngle(newAngle);
+            
+            if (progress < 1) {
+                requestAnimationFrame(animateMissile);
+            } else {
+                setMissilePosition(end); // Ensure missile lands at the exact target
+                setGameStatus('result');
+                const isHit = Math.round(target.x) === Math.round(basePoint.x) && Math.round(target.y) === Math.round(basePoint.y);
+                
+                if (isHit) {
+                    // Attacker is the other player
+                    const attacker = currentTurn === 1 ? 2 : 1;
+                    if (attacker === 1) setScore1(s => s + 1);
+                    else setScore2(s => s + 1);
+                }
 
-      return () => {
-        cancelAnimationFrame(animationFrameId);
-        setMissilePosition(null);
-      };
-    }
-  }, [gameStatus, missileTargetPoint, playerTwoPoint, axis, value, launcherDirection]);
+                // Explosion animation
+                const explosionDuration = 1000;
+                const explosionStart = performance.now();
+                const animateExplosion = (time: number) => {
+                    const elapsed = time - explosionStart;
+                    const progress = Math.min(elapsed / explosionDuration, 1);
+                    setExplosionProgress(progress);
+                    if (progress < 1) {
+                        requestAnimationFrame(animateExplosion);
+                    }
+                };
+                requestAnimationFrame(animateExplosion);
+            }
+        };
+        requestAnimationFrame(animateMissile);
+    }, 1000); // Deploy time
+  }, [playerTwoPoint, basePoint, axis, value, currentTurn]);
 
-  useEffect(() => {
-    if (gameStatus === 'result') {
-      const wasHit = missileTargetPoint && basePoint &&
-        Math.abs(missileTargetPoint.x - basePoint.x) < 0.01 &&
-        Math.abs(missileTargetPoint.y - basePoint.y) < 0.01;
+  const isHit = gameStatus === 'result' && !!missileTargetPoint && !!basePoint &&
+    Math.round(missileTargetPoint.x) === basePoint.x &&
+    Math.round(missileTargetPoint.y) === basePoint.y;
 
-      if (wasHit) {
-        const attacker = currentTurn === 1 ? 2 : 1;
-        if (attacker === 1) {
-          setScore1(s => s + 1);
-        } else {
-          setScore2(s => s + 1);
-        }
-      }
+  // For Y-axis symmetry, the tank's direction depends on which side of the symmetry line it is.
+  // We assume 'right' is the default direction for X-axis symmetry.
+  const tankDirection = basePoint && axis === Axis.Y ? (basePoint.x < value ? 'right' : 'left') : 'right';
+  const launcherDirection = playerTwoPoint && axis === Axis.Y ? (playerTwoPoint.x < value ? 'right' : 'left') : 'right';
+  const previewLauncherDirection = playerTwoPreviewPoint && axis === Axis.Y ? (playerTwoPreviewPoint.x < value ? 'right' : 'left') : 'right';
 
-      let animationFrameId: number;
-      const duration = 800;
-      const startTime = performance.now();
 
-      const animateExplosion = (currentTime: number) => {
-        const elapsedTime = currentTime - startTime;
-        const progress = Math.min(elapsedTime / duration, 1);
-        
-        setExplosionProgress(progress);
-
-        if (progress < 1) {
-          animationFrameId = requestAnimationFrame(animateExplosion);
-        }
-      };
-      
-      animationFrameId = requestAnimationFrame(animateExplosion);
-
-      return () => cancelAnimationFrame(animationFrameId);
-    }
-  }, [gameStatus, basePoint, missileTargetPoint, currentTurn]);
-
-  const isHit = missileTargetPoint && basePoint &&
-    Math.abs(missileTargetPoint.x - basePoint.x) < 0.01 &&
-    Math.abs(missileTargetPoint.y - basePoint.y) < 0.01;
-
-  const SunIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" />
-    </svg>
-  );
-
-  const MoonIcon = () => (
-      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-      </svg>
-  );
+  const isResultState = gameStatus === 'result';
+  const effectClasses = isResultState 
+    ? `flashing-effect ${isHit ? 'hit-success' : 'hit-miss'}` 
+    : '';
 
   return (
-    <div className="min-h-screen font-sans p-4 sm:p-6 lg:p-8">
-      <div className="container mx-auto">
-        <header className="text-center mb-8 relative">
-          <div className="absolute top-0 right-0">
-            <button onClick={toggleTheme} className="p-2 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-stone-500 dark:focus:ring-green-500 transition-colors">
-              {theme === 'light' ? <MoonIcon /> : <SunIcon />}
-            </button>
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-stone-800 dark:text-green-400 font-orbitron tracking-widest uppercase transition-colors">
-            نبرد تقارن
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-2 max-w-2xl mx-auto transition-colors">
-            گروه‌ها به نوبت پایگاه خود را مشخص می‌کنند. گروه دیگر باید نقطه متقارن را برای هدف‌گیری و کسب امتیاز پیدا کند.
-          </p>
-        </header>
+    <div className={`flex flex-col h-screen bg-stone-200 dark:bg-slate-900 font-sans p-2 sm:p-4 gap-4 ${effectClasses}`}>
+      <header className="flex-shrink-0">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center text-stone-800 dark:text-green-400 font-orbitron uppercase tracking-widest">
+          نبرد تقارن
+        </h1>
+        <p className="text-center text-lg sm:text-xl text-stone-600 dark:text-slate-400 mt-4">
+          با استفاده از تقارن، دشمن را نابود کنید!
+        </p>
+      </header>
 
-        <main className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          <div className="lg:col-span-1 w-full">
-            <ControlPanel
-              axis={axis}
-              value={value}
-              onAxisChange={handleAxisChange}
-              onValueChange={handleValueChange}
-              basePoint={basePoint}
-              onSetBasePoint={handleSetBasePoint}
-              playerTwoConfirmed={playerTwoConfirmed}
-              onConfirmPlayerTwoPoint={handleConfirmPlayerTwoPoint}
-              gameStatus={gameStatus}
-              isHit={!!isHit}
-              onFireMissile={handleFireMissile}
-              onResetGame={handleNextStage}
-              onFullReset={handleFullReset}
-              score1={score1}
-              score2={score2}
-              currentTurn={currentTurn}
-            />
-          </div>
-          <div className="lg:col-span-2 w-full">
-             <CoordinatePlane 
-                symmetryAxis={axis} 
-                symmetryValue={value} 
-                basePoint={basePoint}
-                playerTwoPoint={playerTwoPoint}
-                missileTargetPoint={missileTargetPoint}
-                correctSymmetricPoint={correctSymmetricPoint}
-                missilePosition={missilePosition}
-                missileAngle={missileAngle}
-                explosionProgress={explosionProgress}
-                gameStatus={gameStatus}
-                isHit={!!isHit}
-                theme={theme}
-                showGraphics={showGraphics}
-                tankDirection={tankDirection}
-                launcherDirection={launcherDirection}
-              />
-          </div>
-        </main>
-        
-        <footer className="text-center mt-12 text-sm text-slate-500 dark:text-slate-500 transition-colors">
-            <p>ترمینال نبرد تقارن</p>
-        </footer>
-      </div>
+      <main className="flex-grow flex flex-col md:flex-row gap-4 min-h-0">
+        <div className="md:w-1/3 lg:w-1/4 flex-shrink-0">
+           <ControlPanel
+            axis={axis}
+            value={value}
+            onAxisChange={handleAxisChange}
+            basePoint={basePoint}
+            onSetBasePoint={handleSetBasePoint}
+            onSetBasePointPreview={handleSetBasePointPreview}
+            onSetPlayerTwoPreviewPoint={handleSetPlayerTwoPreviewPoint}
+            playerTwoConfirmed={playerTwoConfirmed}
+            onConfirmPlayerTwoPoint={handleConfirmPlayerTwoPoint}
+            gameStatus={gameStatus}
+            isHit={isHit}
+            onFireMissile={handleFireMissile}
+            onResetGame={handleNextStage}
+            onFullReset={handleFullReset}
+            score1={score1}
+            score2={score2}
+            currentTurn={currentTurn}
+          />
+        </div>
+        <div className="flex-grow min-w-0">
+          <CoordinatePlane
+            symmetryAxis={axis}
+            symmetryValue={value}
+            basePoint={basePoint}
+            previewPoint={previewPoint}
+            playerTwoPoint={playerTwoPoint}
+            playerTwoPreviewPoint={playerTwoPreviewPoint}
+            missileTargetPoint={missileTargetPoint}
+            correctSymmetricPoint={correctSymmetricPoint}
+            gameStatus={gameStatus}
+            missilePosition={missilePosition}
+            missileAngle={missileAngle}
+            explosionProgress={explosionProgress}
+            isHit={isHit}
+            theme={theme}
+            showGraphics={showGraphics}
+            tankDirection={tankDirection}
+            launcherDirection={launcherDirection}
+            previewLauncherDirection={previewLauncherDirection}
+          />
+        </div>
+      </main>
+
+       <footer className="text-center text-sm text-slate-500 dark:text-slate-400 p-2 flex-shrink-0">
+        <button onClick={toggleTheme} className="absolute top-4 right-4 p-2 rounded-full bg-indigo-100 dark:bg-slate-800 hover:bg-indigo-200 dark:hover:bg-slate-700 transition-colors">
+            {theme === 'light' ? '🌙' : '☀️'}
+        </button>
+      برای آموزش بهتر ❤️
+      </footer>
     </div>
   );
 };

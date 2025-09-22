@@ -13,6 +13,94 @@
       .missile-chart-container .recharts-surface {
         overflow: visible !important;
       }
+      
+      /* Flashing effect for game result */
+      @keyframes pulse-glow {
+        0%, 100% { opacity: 0; }
+        50% { opacity: 0.7; }
+      }
+
+      .flashing-effect::before {
+        content: '';
+        position: fixed;
+        top: 0; bottom: 0; left: 0; right: 0;
+        pointer-events: none;
+        z-index: 100;
+        animation: pulse-glow 1.5s infinite ease-in-out;
+        opacity: 0;
+      }
+      
+      .flashing-effect::after {
+        content: none;
+      }
+
+      /* --- Light Theme Glow (Default) --- */
+      .flashing-effect.hit-success::before {
+        background: 
+          radial-gradient(ellipse at left, rgba(22, 163, 74, 0.7) 0%, transparent 40%),
+          radial-gradient(ellipse at right, rgba(22, 163, 74, 0.7) 0%, transparent 40%),
+          radial-gradient(ellipse at top, rgba(22, 163, 74, 0.7) 0%, transparent 40%),
+          radial-gradient(ellipse at bottom, rgba(22, 163, 74, 0.7) 0%, transparent 40%);
+      }
+      .flashing-effect.hit-miss::before {
+        background: 
+          radial-gradient(ellipse at left, rgba(220, 38, 38, 0.7) 0%, transparent 40%),
+          radial-gradient(ellipse at right, rgba(220, 38, 38, 0.7) 0%, transparent 40%),
+          radial-gradient(ellipse at top, rgba(220, 38, 38, 0.7) 0%, transparent 40%),
+          radial-gradient(ellipse at bottom, rgba(220, 38, 38, 0.7) 0%, transparent 40%);
+      }
+
+      /* --- Dark Theme Glow (Overrides) --- */
+      .dark .flashing-effect.hit-success::before {
+        background: 
+          radial-gradient(ellipse at left, rgba(34, 197, 94, 0.6) 0%, transparent 40%),
+          radial-gradient(ellipse at right, rgba(34, 197, 94, 0.6) 0%, transparent 40%),
+          radial-gradient(ellipse at top, rgba(34, 197, 94, 0.6) 0%, transparent 40%),
+          radial-gradient(ellipse at bottom, rgba(34, 197, 94, 0.6) 0%, transparent 40%);
+      }
+      .dark .flashing-effect.hit-miss::before {
+        background: 
+          radial-gradient(ellipse at left, rgba(239, 68, 68, 0.6) 0%, transparent 40%),
+          radial-gradient(ellipse at right, rgba(239, 68, 68, 0.6) 0%, transparent 40%),
+          radial-gradient(ellipse at top, rgba(239, 68, 68, 0.6) 0%, transparent 40%),
+          radial-gradient(ellipse at bottom, rgba(239, 68, 68, 0.6) 0%, transparent 40%);
+      }
+
+      /* --- Custom Scrollbar --- */
+      /* Firefox */
+      body {
+        scrollbar-width: thin;
+        scrollbar-color: #a8a29e #e7e5e4; /* thumb: stone-400, track: stone-200 */
+      }
+      .dark body {
+        scrollbar-color: #6b7280 #1f2937; /* thumb: gray-500, track: gray-800 */
+      }
+      /* Webkit */
+      ::-webkit-scrollbar {
+        width: 12px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #e7e5e4; /* stone-200 */
+      }
+      .dark ::-webkit-scrollbar-track {
+        background: #1f2937; /* gray-800 */
+      }
+      ::-webkit-scrollbar-thumb {
+        background-color: #a8a29e; /* stone-400 */
+        border-radius: 20px;
+        border: 3px solid #e7e5e4; /* track color */
+      }
+      .dark ::-webkit-scrollbar-thumb {
+        background-color: #6b7280; /* gray-500 */
+        border-radius: 20px;
+        border: 3px solid #1f2937; /* track color */
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background-color: #78716c; /* stone-500 */
+      }
+      .dark ::-webkit-scrollbar-thumb:hover {
+        background-color: #4b5563; /* gray-600 */
+      }
     </style>
     <script>
       tailwind.config = {
@@ -38,7 +126,7 @@
 }
 </script>
 </head>
-  <body class="bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-300 transition-colors duration-300">
+  <body class="bg-stone-200 dark:bg-slate-900 text-slate-800 dark:text-slate-300 transition-colors duration-300">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
