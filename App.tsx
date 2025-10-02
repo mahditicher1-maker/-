@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Axis } from './types';
 import CoordinatePlane from './components/CoordinatePlane';
 import ControlPanel from './components/ControlPanel';
+import SettingsModal from './components/SettingsModal';
 import * as Sfx from './audio';
 
 // --- Type Definitions ---
@@ -17,17 +18,19 @@ interface MissileState {
   isHit: boolean;
   startTime: number;
 }
+interface CounterAttackState {
+  id: number;
+  start: Point;
+  target: Point;
+  position: Point;
+  startTime: number;
+  explosionProgress: number | null;
+}
 type GameMode = 'classic' | 'decoy';
 type GameStatus = 'pre-start' | 'idle' | 'deploying' | 'fired' | 'result';
+type Difficulty = 'easy' | 'medium' | 'hard';
+type ScreenSize = 'large' | 'medium' | 'small';
 
-
-const getRandomLine = () => {
-    const axis = Math.random() < 0.5 ? Axis.X : Axis.Y;
-    const value = axis === Axis.Y 
-        ? Math.floor(Math.random() * 13) + 2 // x from 2 to 14
-        : Math.floor(Math.random() * 7) + 2;   // y from 2 to 8
-    return { axis, value };
-};
 
 const getDistance = (p1: Point, p2: Point) => {
   return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
@@ -35,14 +38,14 @@ const getDistance = (p1: Point, p2: Point) => {
 
 const App: React.FC = () => {
   // --- Core Game State ---
-  const [gameMode, setGameMode] = useState<GameMode>('classic');
+  const [gameMode, setGameMode] = useState<GameMode>('decoy');
   const [symmetryAxis, setSymmetryAxis] = useState<Axis>(Axis.Y);
   const [symmetryValue, setSymmetryValue] = useState<number>(8);
   const [gameStatus, setGameStatus] = useState<GameStatus>('pre-start');
-  const [score1, setScore1] = useState(0);
-  const [score2, setScore2] = useState(0);
-  const [currentTurn, setCurrentTurn] = useState(1);
+  const [scores, setScores] = useState<number[]>(Array(6).fill(0));
+  const [currentPlayer, setCurrentPlayer] = useState(1);
   const [showGraphics, setShowGraphics] = useState<boolean>(false);
+  const [tutorialStep, setTutorialStep] = useState<'inactive' | 'vertical' | 'horizontal'>('inactive');
   
   // --- Classic Mode State ---
   const [basePoint, setBasePoint] = useState<Point | null>(null);
@@ -54,54 +57,35 @@ const App: React.FC = () => {
 
   // --- Decoy Mode State ---
   const [decoyBases, setDecoyBases] = useState<DecoyBase[]>([]);
-  const [decoyPlayerPoints, setDecoyPlayerPoints] = useState<Point[]>([]);
-  const [timer, setTimer] = useState(60);
+  const [decoyPlayerPoint, setDecoyPlayerPoint] = useState<Point | null>(null);
+  const [timer, setTimer] = useState(30);
+  const [roundsCompletedThisTurn, setRoundsCompletedThisTurn] = useState(0);
 
   // --- Shared Animation State ---
   const [missiles, setMissiles] = useState<MissileState[]>([]);
+  const [counterAttack, setCounterAttack] = useState<CounterAttackState | null>(null);
+  const [lastRoundScore, setLastRoundScore] = useState<number | null>(null);
+  const [showCounterAttackGlow, setShowCounterAttackGlow] = useState<boolean>(false);
+  const [isResultAnimationFinished, setIsResultAnimationFinished] = useState<boolean>(false);
+
 
   // --- UI State ---
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isMuted, setIsMuted] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [numPlayersDecoy, setNumPlayersDecoy] = useState(4);
+  const [roundsPerTurnDecoy, setRoundsPerTurnDecoy] = useState(2);
+  const [decoyTimerDuration, setDecoyTimerDuration] = useState(30);
+  const [difficulty, setDifficulty] = useState<Difficulty>('medium');
+  const [showDecoyBaseCoords, setShowDecoyBaseCoords] = useState<boolean>(false);
+  const [screenSize, setScreenSize] = useState<ScreenSize>('large');
+
 
   // --- Effects ---
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
   
-  // Initialize game on first load or game mode change
-  useEffect(() => {
-    handleFullReset();
-  }, [gameMode]); 
-
-  // Timer logic for decoy mode
-  useEffect(() => {
-    if (gameMode === 'decoy' && gameStatus === 'idle' && timer > 0) {
-      const interval = setInterval(() => {
-        setTimer(t => t - 1);
-      }, 1000);
-      return () => clearInterval(interval);
-    } else if (gameMode === 'decoy' && gameStatus === 'idle' && timer === 0) {
-      handleFireAllMissiles();
-    }
-  }, [gameMode, gameStatus, timer]);
-
-
-  // --- UI Handlers ---
-  const toggleTheme = () => {
-    Sfx.playClick();
-    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
-  };
-
-  const toggleMute = () => {
-    const newMuteState = Sfx.toggleMute();
-    setIsMuted(newMuteState);
-  };
-  
-  const toggleGameMode = () => {
-    Sfx.playClick();
-    setGameMode(prev => prev === 'classic' ? 'decoy' : 'classic');
-  };
 
   // --- Game Flow & Logic ---
 
@@ -111,95 +95,92 @@ const App: React.FC = () => {
       : { x: point.x, y: 2 * symmetryValue - point.y };
   }, [symmetryAxis, symmetryValue]);
 
-  const resetCommonState = useCallback(() => {
-    const { axis, value } = getRandomLine();
-    setSymmetryAxis(axis);
-    setSymmetryValue(value);
-    setMissiles([]);
-    setShowGraphics(false);
-    setGameStatus('pre-start');
-
-    // Reset classic mode state
-    setBasePoint(null);
-    setPreviewPoint(null);
-    setPlayerTwoPoint(null);
-    setPlayerTwoPreviewPoint(null);
-    setCorrectSymmetricPoint(null);
-    setPlayerTwoConfirmed(false);
-    
-    // Reset decoy mode state
-    setDecoyBases([]);
-    setDecoyPlayerPoints([]);
-    setTimer(60);
-  }, []);
-
-  const setupClassicRound = useCallback(() => {
-    // State is already clean from resetCommonState, just change status
-    setGameStatus('idle');
-  }, []);
-  
-  const setupDecoyRound = useCallback(() => {
-    const tempBases: Point[] = [];
-    const maxX = 16, maxY = 10;
-    const MIN_DISTANCE_BASES = 4.0;
-    const MIN_DISTANCE_LAUNCHER = 4.0; // Min distance between a base and a potential launcher spot (its symmetric point)
-    let attempts = 0;
-    
-    while(tempBases.length < 3 && attempts < 200) {
-      attempts++;
-      const p = { x: Math.floor(Math.random() * (maxX + 1)), y: Math.floor(Math.random() * (maxY + 1)) };
-      const s = getSymmetricPoint(p);
-
-      // 1. Symmetric point must be on the board
-      const isSymValid = s.x >= 0 && s.x <= maxX && s.y >= 0 && s.y <= maxY;
-      if(!isSymValid) continue;
-
-      // 2. Base and its own symmetric point (launcher area) must not be too close
-      if (getDistance(p, s) < MIN_DISTANCE_LAUNCHER) continue;
-
-      // 3. New base must be far enough from other existing bases
-      const isFarEnough = tempBases.every(b => getDistance(p, b) >= MIN_DISTANCE_BASES);
-      if(!isFarEnough) continue;
-
-      tempBases.push(p);
-    }
-    // If we failed to find 3 points, fallback to just taking the last valid ones
-    if (tempBases.length < 3) {
-      console.warn("Failed to generate 3 well-spaced decoy bases. The round might be cramped.");
-    }
-
-
-    const realIndex = Math.floor(Math.random() * tempBases.length);
-    const finalBases = tempBases.map((p, i) => ({ ...p, isReal: i === realIndex }));
-    
-    setDecoyBases(finalBases.sort(() => Math.random() - 0.5)); // Shuffle for display
-    setGameStatus('idle');
-  }, [getSymmetricPoint]);
-  
-  const handleStartRound = () => {
-    Sfx.playClick();
-    if (gameMode === 'classic') {
-        setupClassicRound();
-    } else {
-        setupDecoyRound();
-    }
-  };
-
-  const handleNextStage = useCallback(() => {
-    Sfx.playNewRound();
-    setCurrentTurn(turn => turn === 1 ? 2 : 1);
-    resetCommonState();
-  }, [resetCommonState]);
-
-  const handleFullReset = useCallback(() => {
-    Sfx.playNewRound();
-    setScore1(0);
-    setScore2(0);
-    setCurrentTurn(1);
-    resetCommonState();
-  }, [resetCommonState]);
-
   // --- Animation ---
+  const animateCounterAttack = useCallback((attackData: CounterAttackState) => {
+    const duration = 1500; // Tank shell is faster than a missile
+
+    const animationStep = (currentTime: number) => {
+        const progress = Math.min((currentTime - attackData.startTime) / duration, 1);
+        
+        const pos = {
+            x: attackData.start.x + (attackData.target.x - attackData.start.x) * progress,
+            y: attackData.start.y + (attackData.target.y - attackData.start.y) * progress,
+        };
+
+        const updatedAttack = { ...attackData, position: pos };
+        setCounterAttack(updatedAttack);
+
+        if (progress < 1) {
+            requestAnimationFrame(animationStep);
+        } else {
+            setShowCounterAttackGlow(true);
+            Sfx.playHit(); // Use the existing hit sound for the explosion
+            const explosionDuration = 1000;
+            const explosionStart = performance.now();
+            const animateExplosion = (time: number) => {
+                const explosionElapsed = time - explosionStart;
+                const explosionProgress = Math.min(explosionElapsed / explosionDuration, 1);
+                setCounterAttack(current => current ? { ...current, explosionProgress } : null);
+                if (explosionProgress < 1) {
+                    requestAnimationFrame(animateExplosion);
+                } else {
+                    setIsResultAnimationFinished(true);
+                }
+            };
+            requestAnimationFrame(animateExplosion);
+        }
+    };
+    requestAnimationFrame(animationStep);
+  }, []);
+  
+  const handleClassicMiss = useCallback(() => {
+    const tank = basePoint;
+    const launcher = playerTwoPoint;
+    if (tank && launcher) {
+        Sfx.playTankFire();
+        const launchTime = performance.now();
+        const newCounterAttack: CounterAttackState = {
+            id: Date.now(),
+            start: tank,
+            target: launcher,
+            position: tank,
+            startTime: launchTime,
+            explosionProgress: null,
+        };
+        setCounterAttack(newCounterAttack);
+        animateCounterAttack(newCounterAttack);
+    } else {
+        setIsResultAnimationFinished(true);
+    }
+  }, [basePoint, playerTwoPoint, animateCounterAttack]);
+
+  const handleDecoyMiss = useCallback(() => {
+    const realBase = decoyBases.find(b => b.isReal);
+    
+    let counterAttackTarget: Point | null = decoyPlayerPoint;
+    
+    if (!counterAttackTarget) {
+      counterAttackTarget = getSymmetricPoint({x: 8, y: 5}); 
+    }
+
+    if (realBase && counterAttackTarget) {
+        Sfx.playTankFire();
+        const launchTime = performance.now();
+        const newCounterAttack: CounterAttackState = {
+            id: Date.now(),
+            start: realBase,
+            target: counterAttackTarget,
+            position: realBase,
+            startTime: launchTime,
+            explosionProgress: null,
+        };
+        setCounterAttack(newCounterAttack);
+        animateCounterAttack(newCounterAttack);
+    } else {
+        setIsResultAnimationFinished(true);
+    }
+  }, [decoyBases, decoyPlayerPoint, animateCounterAttack, getSymmetricPoint]);
+
   const animateMissiles = useCallback((missileData: MissileState[]) => {
       const duration = 2500;
       
@@ -239,48 +220,119 @@ const App: React.FC = () => {
               setGameStatus('result');
               const explosionDuration = 1000;
               const explosionStart = performance.now();
+              const anyHit = updatedMissiles.some(m => m.isHit);
+
               const animateExplosion = (time: number) => {
                   const explosionElapsed = time - explosionStart;
                   const explosionProgress = Math.min(explosionElapsed / explosionDuration, 1);
                   setMissiles(currentMissiles => currentMissiles.map(m => ({ ...m, explosionProgress })));
-                  if (explosionProgress < 1) requestAnimationFrame(animateExplosion);
+                  
+                  if (explosionProgress < 1) {
+                      requestAnimationFrame(animateExplosion);
+                  } else {
+                      if (anyHit) {
+                          setIsResultAnimationFinished(true);
+                      } else {
+                          if (gameMode === 'decoy') {
+                              handleDecoyMiss();
+                          } else if (gameMode === 'classic') {
+                              handleClassicMiss();
+                          }
+                      }
+                  }
               };
-              requestAnimationFrame(animateExplosion);
 
-              const anyHit = updatedMissiles.some(m => m.isHit);
               if (anyHit) {
                   Sfx.playHit();
-                   const attacker = currentTurn === 1 ? 2 : 1;
-                   if (attacker === 1) setScore1(s => s + 1);
-                   else setScore2(s => s + 1);
+                  const pointsScored = gameMode === 'decoy' ? 10 + timer : 1;
+                  setLastRoundScore(pointsScored);
+
+                  setScores(prevScores => {
+                      const newScores = [...prevScores];
+                      let playerIndexToScore;
+                      if (gameMode === 'classic') {
+                          const attacker = currentPlayer === 1 ? 2 : 1;
+                          playerIndexToScore = attacker - 1;
+                      } else {
+                          playerIndexToScore = currentPlayer - 1;
+                      }
+                      
+                      if (playerIndexToScore >= 0 && playerIndexToScore < newScores.length) {
+                         newScores[playerIndexToScore] += pointsScored;
+                      }
+                      return newScores;
+                  });
               } else {
                   Sfx.playMiss();
+                  setLastRoundScore(0);
               }
+              
+              requestAnimationFrame(animateExplosion);
           }
       };
       requestAnimationFrame(animationStep);
-  }, [currentTurn]);
+  }, [gameMode, currentPlayer, timer, handleDecoyMiss, handleClassicMiss]);
+  
+  const handleFireAllMissiles = useCallback(() => {
+    if (gameStatus !== 'idle' || gameMode !== 'decoy' || !decoyPlayerPoint) return;
+    
+    setShowGraphics(true);
+    setGameStatus('deploying');
 
-  // --- Classic Mode Handlers ---
-  const handleSetBasePointPreview = useCallback((p: Point | null) => {!basePoint && setPreviewPoint(p)}, [basePoint]);
-  const handleSetPlayerTwoPreviewPoint = useCallback((p: Point | null) => {!playerTwoPoint && setPlayerTwoPreviewPoint(p)}, [playerTwoPoint]);
-  const handleSetBasePoint = useCallback((p: Point) => {
-    Sfx.playConfirm();
-    setBasePoint(p);
-    setPreviewPoint(null);
-    setPlayerTwoPoint(null);
-    setPlayerTwoPreviewPoint(null);
-    setCorrectSymmetricPoint(null);
-    setPlayerTwoConfirmed(false);
-  }, []);
-  const handleConfirmPlayerTwoPoint = useCallback((p: Point) => {
-    if (!basePoint) return;
-    Sfx.playConfirm();
-    setPlayerTwoPoint(p);
-    setPlayerTwoPreviewPoint(null);
-    setCorrectSymmetricPoint(getSymmetricPoint(basePoint));
-    setPlayerTwoConfirmed(true);
-  }, [basePoint, getSymmetricPoint]);
+    const realBase = decoyBases.find(b => b.isReal);
+    if (!realBase) {
+      setGameStatus('result');
+      return;
+    }
+
+    setTimeout(() => {
+        Sfx.playLaunch();
+        const launchTime = performance.now();
+        const target = getSymmetricPoint(decoyPlayerPoint);
+        const isHit = Math.round(target.x) === Math.round(realBase.x) && Math.round(target.y) === Math.round(realBase.y);
+        const newMissile: MissileState = {
+            id: 0,
+            start: decoyPlayerPoint,
+            target,
+            position: decoyPlayerPoint,
+            angle: 0,
+            explosionProgress: null,
+            isHit,
+            startTime: launchTime
+        };
+        
+        setMissiles([newMissile]);
+        setGameStatus('fired');
+        animateMissiles([newMissile]);
+    }, 1000);
+  }, [gameStatus, gameMode, decoyPlayerPoint, decoyBases, getSymmetricPoint, animateMissiles]);
+    
+  const handleTimeout = useCallback(() => {
+    if (gameStatus !== 'idle' || gameMode !== 'decoy') return;
+    setGameStatus('result');
+    setMissiles([]);
+    Sfx.playMiss();
+    setLastRoundScore(0);
+    setTimer(0);
+    setTimeout(handleDecoyMiss, 500);
+  }, [gameStatus, gameMode, handleDecoyMiss]);
+
+
+  useEffect(() => {
+    if (gameMode === 'decoy' && gameStatus === 'idle' && timer > 0) {
+      const interval = setInterval(() => {
+        setTimer(t => t - 1);
+      }, 1000);
+      return () => clearInterval(interval);
+    } else if (gameMode === 'decoy' && gameStatus === 'idle' && timer === 0) {
+      if (decoyPlayerPoint) {
+        handleFireAllMissiles();
+      } else {
+        handleTimeout();
+      }
+    }
+  }, [gameMode, gameStatus, timer, decoyPlayerPoint, handleFireAllMissiles, handleTimeout]);
+
   const handleFireMissile = useCallback(() => {
     if (!playerTwoPoint || !basePoint) return;
     setShowGraphics(true);
@@ -307,82 +359,306 @@ const App: React.FC = () => {
         animateMissiles([newMissile]);
     }, 1000);
   }, [playerTwoPoint, basePoint, getSymmetricPoint, animateMissiles]);
-
-  // --- Decoy Mode Handlers ---
-  const handleAddDecoyPoint = useCallback((point: Point) => {
-    if (decoyPlayerPoints.length < 3) {
-      Sfx.playClick();
-      setDecoyPlayerPoints(current => [...current, point]);
-    }
-  }, [decoyPlayerPoints.length]);
-
-  const handleUpdateDecoyPoint = useCallback((index: number, point: Point) => {
-    Sfx.playClick();
-    setDecoyPlayerPoints(current => {
-      const newPoints = [...current];
-      if (index >= 0 && index < newPoints.length) {
-        newPoints[index] = point;
-      }
-      return newPoints;
-    });
-  }, []);
-
-  const handleDeleteDecoyPoint = useCallback((index: number) => {
-    Sfx.playMiss();
-    setDecoyPlayerPoints(current => current.filter((_, i) => i !== index));
-  }, []);
-
-
-  const handleFireAllMissiles = useCallback(() => {
-    if (gameStatus !== 'idle' || gameMode !== 'decoy') return;
     
-    setShowGraphics(true);
-    setGameStatus('deploying');
-    setTimer(0); // Stop timer
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' && gameMode === 'classic' && playerTwoConfirmed && gameStatus === 'idle') {
+        handleFireMissile();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [gameMode, playerTwoConfirmed, gameStatus, handleFireMissile]);
 
-    const realBase = decoyBases.find(b => b.isReal);
-    if (!realBase) return;
 
-    setTimeout(() => {
-        Sfx.playLaunch();
-        const launchTime = performance.now();
-        const newMissiles: MissileState[] = decoyPlayerPoints.map((startPoint, i) => {
-            const target = getSymmetricPoint(startPoint);
-            const isHit = Math.round(target.x) === Math.round(realBase.x) && Math.round(target.y) === Math.round(realBase.y);
-            return {
-                id: i,
-                start: startPoint,
-                target,
-                position: startPoint,
-                angle: 0,
-                explosionProgress: null,
-                isHit,
-                startTime: launchTime + i * 150 // Stagger launch slightly
-            };
-        });
-        
-        setMissiles(newMissiles);
-        if (newMissiles.length > 0) {
-            setGameStatus('fired');
-            animateMissiles(newMissiles);
-        } else {
-             setGameStatus('result');
-             Sfx.playMiss();
+  const toggleTheme = () => {
+    Sfx.playClick();
+    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  const toggleMute = () => {
+    const newMuteState = Sfx.toggleMute();
+    setIsMuted(newMuteState);
+  };
+  
+  const toggleGameMode = () => {
+    Sfx.playClick();
+    setGameMode(prev => prev === 'classic' ? 'decoy' : 'classic');
+  };
+
+
+  const resetCommonState = useCallback((
+    isFullReset: boolean = false, 
+    difficultyOverride?: Difficulty,
+    axisOverride?: { axis: Axis; value: number }
+  ) => {
+    const activeDifficulty = difficultyOverride || difficulty;
+    
+    if (axisOverride) {
+      setSymmetryAxis(axisOverride.axis);
+      setSymmetryValue(axisOverride.value);
+    } else {
+      setSymmetryAxis(prevAxis => {
+          const isFirstRoundOfPair = isFullReset || roundsCompletedThisTurn % 2 === 0;
+          let nextAxis;
+          if (isFirstRoundOfPair) {
+              nextAxis = Math.random() < 0.5 ? Axis.X : Axis.Y;
+          } else {
+              nextAxis = prevAxis === Axis.Y ? Axis.X : Axis.Y;
+          }
+          
+          let value;
+          if (nextAxis === Axis.Y) {
+              let minVal, maxVal;
+              switch (activeDifficulty) {
+                  case 'hard': minVal = 8; maxVal = 8; break;
+                  case 'medium': minVal = 5; maxVal = 11; break;
+                  case 'easy': default: minVal = 2; maxVal = 14; break;
+              }
+              value = Math.floor(Math.random() * (maxVal - minVal + 1)) + minVal;
+          } else {
+              let minVal, maxVal;
+              switch (activeDifficulty) {
+                  case 'hard': minVal = 5; maxVal = 5; break;
+                  case 'medium': minVal = 3; maxVal = 7; break;
+                  case 'easy': default: minVal = 1; maxVal = 9; break;
+              }
+              value = Math.floor(Math.random() * (maxVal - minVal + 1)) + minVal;
+          }
+          
+          setSymmetryValue(value);
+          return nextAxis;
+      });
+    }
+
+    setMissiles([]);
+    setCounterAttack(null);
+    setShowGraphics(false);
+    setGameStatus('pre-start');
+    setShowCounterAttackGlow(false);
+    setIsResultAnimationFinished(false);
+
+    setBasePoint(null);
+    setPreviewPoint(null);
+    setPlayerTwoPoint(null);
+    setPlayerTwoPreviewPoint(null);
+    setCorrectSymmetricPoint(null);
+    setPlayerTwoConfirmed(false);
+    
+    setDecoyBases([]);
+    setDecoyPlayerPoint(null);
+    setTimer(decoyTimerDuration);
+    setLastRoundScore(null);
+  }, [decoyTimerDuration, difficulty, roundsCompletedThisTurn]);
+
+  const setupClassicRound = useCallback(() => {
+    setGameStatus('idle');
+  }, []);
+  
+  const setupDecoyRound = useCallback(() => {
+    let distances: number[];
+    if (symmetryAxis === Axis.Y) {
+        switch (difficulty) {
+            case 'easy':   distances = [1, 2]; break;
+            case 'medium': distances = [3, 4, 5]; break;
+            case 'hard':   distances = [6, 7, 8]; break;
+            default:       distances = [3, 4, 5];
         }
-    }, 1000);
-  }, [gameStatus, gameMode, decoyPlayerPoints, decoyBases, getSymmetricPoint, animateMissiles]);
+    } else {
+        switch (difficulty) {
+            case 'easy':   distances = [1]; break;
+            case 'medium': distances = [2, 3]; break;
+            case 'hard':   distances = [4, 5]; break;
+            default:       distances = [2, 3];
+        }
+    }
 
-  // --- Render Logic ---
+    const tempBases: Point[] = [];
+    const maxX = 16, maxY = 10;
+    const MIN_DISTANCE_LAUNCHER = 4.0;
+    let attempts = 0;
+    
+    while(tempBases.length < 1 && attempts < 200) {
+      attempts++;
+      
+      const distance = distances[Math.floor(Math.random() * distances.length)];
+      const side = Math.random() < 0.5 ? 1 : -1;
+      let p: Point;
+
+      if (symmetryAxis === Axis.Y) {
+          p = { x: symmetryValue + side * distance, y: Math.floor(Math.random() * (maxY + 1)) };
+      } else {
+          p = { x: Math.floor(Math.random() * (maxX + 1)), y: symmetryValue + side * distance };
+      }
+
+      const isPointOnBoard = p.x >= 0 && p.x <= maxX && p.y >= 0 && p.y <= maxY;
+      if (!isPointOnBoard) continue;
+      
+      const s = getSymmetricPoint(p);
+
+      const isSymValid = s.x >= 0 && s.x <= maxX && s.y >= 0 && s.y <= maxY;
+      if(!isSymValid) continue;
+
+      if (getDistance(p, s) < MIN_DISTANCE_LAUNCHER) continue;
+
+      tempBases.push(p);
+    }
+    
+    if (tempBases.length < 1) {
+      console.warn("Failed to generate a valid base for decoy mode after 200 attempts. Check settings.");
+      let p: Point, s: Point, isSymValid: boolean;
+      do {
+        p = { x: Math.floor(Math.random() * (maxX + 1)), y: Math.floor(Math.random() * (maxY + 1)) };
+        s = getSymmetricPoint(p);
+        isSymValid = s.x >= 0 && s.x <= maxX && s.y >= 0 && s.y <= maxY;
+      } while (!isSymValid)
+      tempBases.push(p);
+    }
+
+    const finalBases = tempBases.map(p => ({ ...p, isReal: true }));
+    
+    setDecoyBases(finalBases);
+    setGameStatus('idle');
+  }, [getSymmetricPoint, difficulty, symmetryAxis, symmetryValue]);
+  
+  const handleStartRound = () => {
+    Sfx.playClick();
+    if (gameMode === 'classic') {
+        setupClassicRound();
+    } else {
+        setupDecoyRound();
+    }
+  };
+
+  const setupTutorialStep = useCallback((step: 'vertical' | 'horizontal') => {
+    setTutorialStep(step);
+    Sfx.playNewRound();
+
+    if (step === 'vertical') {
+        setScores(Array(6).fill(0));
+        setCurrentPlayer(1);
+        setRoundsCompletedThisTurn(0);
+    }
+    const axisOverride = step === 'vertical'
+        ? { axis: Axis.Y, value: 8 }
+        : { axis: Axis.X, value: 5 };
+    resetCommonState(false, undefined, axisOverride);
+  }, [resetCommonState]);
+
+  const handleFullReset = useCallback((difficultyOverride?: Difficulty) => {
+    Sfx.playNewRound();
+    setTutorialStep('inactive');
+    setScores(Array(6).fill(0));
+    setCurrentPlayer(1);
+    setRoundsCompletedThisTurn(0);
+    resetCommonState(true, difficultyOverride);
+  }, [resetCommonState]);
+
+  const handleNextStage = useCallback(() => {
+    if (tutorialStep === 'vertical') {
+        setupTutorialStep('horizontal');
+        return;
+    }
+    if (tutorialStep === 'horizontal') {
+        setTutorialStep('inactive');
+        handleFullReset();
+        return;
+    }
+
+    Sfx.playNewRound();
+    if (gameMode === 'classic') {
+      setCurrentPlayer(p => (p === 1 ? 2 : 1));
+    } else {
+        const newRoundsCompleted = roundsCompletedThisTurn + 1;
+        if (newRoundsCompleted >= roundsPerTurnDecoy) {
+            setRoundsCompletedThisTurn(0);
+            setCurrentPlayer(p => (p % numPlayersDecoy) + 1);
+        } else {
+            setRoundsCompletedThisTurn(newRoundsCompleted);
+        }
+    }
+    resetCommonState();
+  }, [resetCommonState, gameMode, roundsCompletedThisTurn, roundsPerTurnDecoy, numPlayersDecoy, tutorialStep, setupTutorialStep, handleFullReset]);
+
+
+  useEffect(() => {
+    if (gameMode === 'decoy') {
+        setupTutorialStep('vertical');
+    } else {
+        handleFullReset();
+    }
+  }, [gameMode, setupTutorialStep, handleFullReset]); 
+
+  const handleApplySettings = (settings: { numPlayers: number; roundsPerTurn: number; timerDuration: number; difficulty: Difficulty; showCoords: boolean; screenSize: ScreenSize; }) => {
+    Sfx.playConfirm();
+    setNumPlayersDecoy(settings.numPlayers);
+    setRoundsPerTurnDecoy(settings.roundsPerTurn);
+    setDecoyTimerDuration(settings.timerDuration);
+    setDifficulty(settings.difficulty);
+    setShowDecoyBaseCoords(settings.showCoords);
+    setScreenSize(settings.screenSize);
+    setIsSettingsOpen(false);
+    handleFullReset(settings.difficulty);
+    setTimer(settings.timerDuration);
+  };
+
+  const handleSetBasePointPreview = useCallback((p: Point | null) => {!basePoint && setPreviewPoint(p)}, [basePoint]);
+  const handleSetPlayerTwoPreviewPoint = useCallback((p: Point | null) => {!playerTwoPoint && setPlayerTwoPreviewPoint(p)}, [playerTwoPoint]);
+  const handleSetBasePoint = useCallback((p: Point) => {
+    Sfx.playConfirm();
+    setBasePoint(p);
+    setPreviewPoint(null);
+    setPlayerTwoPoint(null);
+    setPlayerTwoPreviewPoint(null);
+    setCorrectSymmetricPoint(null);
+    setPlayerTwoConfirmed(false);
+  }, []);
+  const handleConfirmPlayerTwoPoint = useCallback((p: Point) => {
+    if (!basePoint) return;
+    Sfx.playConfirm();
+    setPlayerTwoPoint(p);
+    setPlayerTwoPreviewPoint(null);
+    setCorrectSymmetricPoint(getSymmetricPoint(basePoint));
+    setPlayerTwoConfirmed(true);
+  }, [basePoint, getSymmetricPoint]);
+
+ const handleSetDecoyPoint = useCallback((point: Point | null) => {
+    if (gameStatus === 'idle') {
+      if(point) Sfx.playClick();
+      setDecoyPlayerPoint(point);
+    }
+  }, [gameStatus]);
+
   const isHit = gameStatus === 'result' && missiles.some(m => m.isHit);
   const isResultState = gameStatus === 'result';
-  const effectClasses = isResultState ? `flashing-effect ${isHit ? 'hit-success' : 'hit-miss'}` : '';
+  
+  let effectClasses = '';
+  if (isResultState) {
+    if (isHit) {
+      effectClasses = 'flashing-effect hit-success';
+    } else if (gameMode === 'classic' || (gameMode === 'decoy' && !counterAttack)) {
+      effectClasses = 'flashing-effect hit-miss';
+    }
+  }
+  if (showCounterAttackGlow) {
+    effectClasses = 'flashing-effect hit-miss';
+  }
+
 
   const tankDirection = basePoint && symmetryAxis === Axis.Y ? (basePoint.x < symmetryValue ? 'right' : 'left') : 'right';
   const launcherDirection = playerTwoPoint && symmetryAxis === Axis.Y ? (playerTwoPoint.x < symmetryValue ? 'right' : 'left') : 'right';
   const previewLauncherDirection = playerTwoPreviewPoint && symmetryAxis === Axis.Y ? (playerTwoPreviewPoint.x < symmetryValue ? 'right' : 'left') : 'right';
 
+  const sizeClasses = {
+    large: 'max-w-full',
+    medium: 'max-w-screen-xl',
+    small: 'max-w-screen-lg',
+  };
+
   return (
-    <div className={`flex flex-col h-screen bg-stone-200 dark:bg-slate-900 font-sans p-2 sm:p-4 gap-4 ${effectClasses}`}>
+    <div className={`flex flex-col h-screen bg-stone-200 dark:bg-slate-900 font-sans p-2 sm:p-4 gap-4 ${effectClasses} ${sizeClasses[screenSize]} ${screenSize !== 'large' ? 'mx-auto' : ''}`}>
       <header className="flex-shrink-0">
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center text-stone-800 dark:text-green-400 font-orbitron uppercase tracking-widest">
           نبرد تقارن
@@ -410,17 +686,19 @@ const App: React.FC = () => {
             onResetGame={handleNextStage}
             onFullReset={handleFullReset}
             onStartRound={handleStartRound}
-            score1={score1}
-            score2={score2}
-            currentTurn={currentTurn}
-            // Decoy Mode Props
+            scores={scores}
+            currentPlayer={currentPlayer}
+            tutorialStep={tutorialStep}
             decoyBases={decoyBases}
             timer={timer}
-            decoyPlayerPoints={decoyPlayerPoints}
-            onAddDecoyPoint={handleAddDecoyPoint}
-            onUpdateDecoyPoint={handleUpdateDecoyPoint}
-            onDeleteDecoyPoint={handleDeleteDecoyPoint}
+            decoyPlayerPoint={decoyPlayerPoint}
+            onSetDecoyPoint={handleSetDecoyPoint}
             onFireAllMissiles={handleFireAllMissiles}
+            numPlayersDecoy={numPlayersDecoy}
+            roundsPerTurnDecoy={roundsPerTurnDecoy}
+            roundsCompletedThisTurn={roundsCompletedThisTurn}
+            lastRoundScore={lastRoundScore}
+            isResultAnimationFinished={isResultAnimationFinished}
           />
         </div>
         <div className="flex-grow min-w-0">
@@ -435,15 +713,16 @@ const App: React.FC = () => {
             correctSymmetricPoint={correctSymmetricPoint}
             gameStatus={gameStatus}
             missiles={missiles}
+            counterAttack={counterAttack}
             isHit={isHit}
             theme={theme}
             showGraphics={showGraphics}
             tankDirection={tankDirection}
             launcherDirection={launcherDirection}
             previewLauncherDirection={previewLauncherDirection}
-            // Decoy Mode Props
             decoyBases={decoyBases}
-            decoyPlayerPoints={decoyPlayerPoints}
+            decoyPlayerPoint={decoyPlayerPoint}
+            showDecoyBaseCoords={showDecoyBaseCoords}
           />
         </div>
       </main>
@@ -456,12 +735,29 @@ const App: React.FC = () => {
             <button onClick={toggleTheme} className="p-2 rounded-full bg-indigo-100 dark:bg-slate-800 hover:bg-indigo-200 dark:hover:bg-slate-700 transition-colors">
                 {theme === 'light' ? '🌙' : '☀️'}
             </button>
+            <button onClick={() => { Sfx.playClick(); setIsSettingsOpen(true); }} title="تنظیمات" className="p-2 rounded-full bg-indigo-100 dark:bg-slate-800 hover:bg-indigo-200 dark:hover:bg-slate-700 transition-colors text-xl">
+              ⚙️
+            </button>
             <button onClick={toggleMute} className="p-2 rounded-full bg-indigo-100 dark:bg-slate-800 hover:bg-indigo-200 dark:hover:bg-slate-700 transition-colors text-xl">
                 {isMuted ? '🔇' : '🔊'}
             </button>
         </div>
       برای آموزش بهتر ❤️
       </footer>
+      {isSettingsOpen && (
+        <SettingsModal
+            isOpen={isSettingsOpen}
+            onClose={() => setIsSettingsOpen(false)}
+            gameMode={gameMode}
+            initialNumPlayers={numPlayersDecoy}
+            initialRoundsPerTurn={roundsPerTurnDecoy}
+            initialTimerDuration={decoyTimerDuration}
+            initialDifficulty={difficulty}
+            initialShowDecoyBaseCoords={showDecoyBaseCoords}
+            initialScreenSize={screenSize}
+            onApplySettings={handleApplySettings}
+        />
+      )}
     </div>
   );
 };

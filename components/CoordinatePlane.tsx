@@ -21,6 +21,11 @@ interface MissileState {
   explosionProgress: number | null;
   isHit: boolean;
 }
+interface CounterAttackState {
+  position: Point;
+  target: Point;
+  explosionProgress: number | null;
+}
 
 interface CoordinatePlaneProps {
   gameMode: 'classic' | 'decoy';
@@ -32,6 +37,7 @@ interface CoordinatePlaneProps {
   playerTwoPreviewPoint: { x: number; y: number } | null;
   correctSymmetricPoint: { x: number; y: number } | null;
   missiles: MissileState[];
+  counterAttack: CounterAttackState | null;
   gameStatus: 'idle' | 'fired' | 'result' | 'deploying' | 'pre-start';
   isHit: boolean;
   theme: 'light' | 'dark';
@@ -41,7 +47,8 @@ interface CoordinatePlaneProps {
   previewLauncherDirection: 'left' | 'right';
   // Decoy mode props
   decoyBases: DecoyBase[];
-  decoyPlayerPoints: Point[];
+  decoyPlayerPoint: Point | null;
+  showDecoyBaseCoords: boolean;
 }
 
 const toPersianDigits = (n: number | string): string => {
@@ -116,6 +123,18 @@ const CustomMissile: React.FC<any> = ({ cx, cy, angle }) => {
   );
 };
 
+const CustomShell: React.FC<any> = ({ cx, cy, isDark }) => {
+  if (cx == null || cy == null) return null;
+  const shellColor = isDark ? '#f59e0b' : '#f97316';
+  const trailColor = isDark ? 'rgba(251, 146, 60, 0.6)' : 'rgba(249, 115, 22, 0.6)';
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r="8" fill={trailColor} />
+      <circle cx={cx} cy={cy} r="4" fill={shellColor} />
+    </g>
+  );
+};
+
 const CustomExplosion: React.FC<any> = ({ cx, cy, progress, isHit }) => {
     if (cx == null || cy == null || progress === null || progress === 0) return null;
     
@@ -167,11 +186,15 @@ const renderSymmetryLines = (props: any) => {
 const yTicks = Array.from({ length: 11 }, (_, i) => i);
 const xTicks = Array.from({ length: 17 }, (_, i) => i);
 type LabelPosition = 'top' | 'bottom' | 'insideBottom' | 'insideLeft' | 'insideRight';
+interface LabelConfig {
+  position: LabelPosition;
+  dy: number;
+}
 
 const CoordinatePlane: React.FC<CoordinatePlaneProps> = ({ 
   gameMode, symmetryAxis, symmetryValue, basePoint, previewPoint, playerTwoPoint, playerTwoPreviewPoint,
-  correctSymmetricPoint, missiles, gameStatus, isHit, theme, showGraphics, tankDirection,
-  launcherDirection, previewLauncherDirection, decoyBases, decoyPlayerPoints
+  correctSymmetricPoint, missiles, counterAttack, gameStatus, isHit, theme, showGraphics, tankDirection,
+  launcherDirection, previewLauncherDirection, decoyBases, decoyPlayerPoint, showDecoyBaseCoords
 }) => {
   const yDomain: [number, number] = [0, 10];
   const xDomain: [number, number] = [0, 16];
@@ -186,9 +209,9 @@ const CoordinatePlane: React.FC<CoordinatePlaneProps> = ({
     return Math.abs(p1.x - p2.x) < 3.5 && Math.abs(p1.y - p2.y) < 3.5;
   };
 
-  let baseLabel = { position: 'top' as LabelPosition, dy: -20 };
-  let playerTwoLabel = { position: 'top' as LabelPosition, dy: -22 };
-  let correctPointLabel = { position: 'top' as LabelPosition, dy: -12 };
+  let baseLabel: LabelConfig = { position: 'top', dy: -20 };
+  let playerTwoLabel: LabelConfig = { position: 'top', dy: -22 };
+  let correctPointLabel: LabelConfig = { position: 'top', dy: -12 };
 
   if (arePointsClose(basePoint, playerTwoPoint)) {
     playerTwoLabel = { position: 'bottom', dy: 28 };
@@ -210,13 +233,12 @@ const CoordinatePlane: React.FC<CoordinatePlaneProps> = ({
             
             <Customized component={renderSymmetryLines} symmetryAxis={symmetryAxis} symmetryValue={symmetryValue} basePoint={basePoint} previewPoint={previewPoint} playerTwoPoint={playerTwoPoint} playerTwoPreviewPoint={playerTwoPreviewPoint} theme={theme} />
             
-            <XAxis type="number" dataKey="x" name="طول" domain={xDomain} ticks={xTicks} interval={0} tickFormatter={(tick) => toPersianDigits(tick)} tick={{ fill: axisTextColor, fontSize: 24, dy: 10 }} stroke={axisLineColor} allowDataOverflow={true} axisLine={symmetryAxis === Axis.X && symmetryValue === 0 ? false : { stroke: axisLineColor, strokeWidth: 1.5 }} />
-            <YAxis type="number" dataKey="y" name="عرض" domain={yDomain} ticks={yTicks} interval={0} tickFormatter={(tick) => toPersianDigits(tick)} tick={{ fill: axisTextColor, fontSize: 24, dx: -25 }} stroke={axisLineColor} allowDataOverflow={true} axisLine={symmetryAxis === Axis.Y && symmetryValue === 0 ? false : { stroke: axisLineColor, strokeWidth: 1.5 }} />
+            <XAxis type="number" dataKey="x" name="طول" domain={xDomain} ticks={xTicks} interval={0} tickFormatter={(tick) => toPersianDigits(tick)} tick={{ fill: axisTextColor, fontSize: 27, fontWeight: 'bold', dy: 10 }} stroke={axisLineColor} allowDataOverflow={true} axisLine={symmetryAxis === Axis.X && symmetryValue === 0 ? false : { stroke: axisLineColor, strokeWidth: 1.5 }} />
+            <YAxis type="number" dataKey="y" name="عرض" domain={yDomain} ticks={yTicks} interval={0} tickFormatter={(tick) => toPersianDigits(tick)} tick={{ fill: axisTextColor, fontSize: 27, fontWeight: 'bold', dx: -25 }} stroke={axisLineColor} allowDataOverflow={true} axisLine={symmetryAxis === Axis.Y && symmetryValue === 0 ? false : { stroke: axisLineColor, strokeWidth: 1.5 }} />
 
             {symmetryAxis === Axis.Y && (<ReferenceLine x={symmetryValue} stroke="#f43f5e" strokeWidth={3} ifOverflow="visible" />)}
             {symmetryAxis === Axis.X && (<ReferenceLine y={symmetryValue} stroke="#f43f5e" strokeWidth={3} ifOverflow="visible" />)}
 
-            {/* --- Classic Mode Points --- */}
             {gameMode === 'classic' && !basePoint && previewPoint && (
                 <ReferenceDot x={previewPoint.x} y={previewPoint.y} r={10} fill={isDark ? 'rgba(248, 113, 113, 0.5)' : 'rgba(220, 38, 38, 0.5)'} ifOverflow="visible" label={{ value: `پایگاه`, position: 'top', dy: -20, fill: isDark ? 'rgba(248, 113, 113, 0.6)' : 'rgba(239, 68, 68, 0.6)', fontWeight: 'bold', fontSize: 20, style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` } }} />
             )}
@@ -233,21 +255,43 @@ const CoordinatePlane: React.FC<CoordinatePlaneProps> = ({
                <ReferenceDot x={correctSymmetricPoint.x} y={correctSymmetricPoint.y} r={8} fill="#22c55e" stroke={isDark ? "#1e293b" : "#f1f5f9"} strokeWidth={2} ifOverflow="visible" label={{ value: 'نقطه صحیح', position: correctPointLabel.position, dy: correctPointLabel.dy, fill: isDark ? '#4ade80' : '#16a34a', fontWeight: 'bold', fontSize: 18, style: { textShadow: `0 0 5px ${isDark ? 'black' : 'rgba(255,255,255,0.7)'}` }}} />
             )}
             
-            {/* --- Decoy Mode Points --- */}
-            {gameMode === 'decoy' && gameStatus === 'result' && decoyBases.map((base, i) => (
-                <ReferenceDot key={`base-${i}`} x={base.x} y={base.y} r={showGraphics ? 0 : 8} fill={isDark ? '#f87171' : '#dc2626'} ifOverflow="visible" shape={(props: any) => <Tank {...props} isDark={isDark} direction={base.x < symmetryValue ? 'right' : 'left'} isDecoy={true} isRevealed={base.isReal} />} label={base.isReal ? { value: 'پایگاه اصلی', position: 'top', dy: -20, fill: '#22c55e', fontWeight: 'bold' } : undefined} />
-            ))}
-            {gameMode === 'decoy' && decoyPlayerPoints.map((p, i) => (
-                <ReferenceDot key={`decoy-p2-${i}`} x={p.x} y={p.y} r={showGraphics ? 0 : 8} fill={isDark ? '#60a5fa' : '#2563eb'} ifOverflow="visible" shape={(props: any) => <MissileLauncher {...props} isDark={isDark} direction={p.x < symmetryValue ? 'right' : 'left'} />} label={{value: `هدف ${toPersianDigits(i+1)}`, position: 'top', dy: -22, fill: '#3b82f6'}} />
-            ))}
+            {gameMode === 'decoy' && decoyBases.map((base, i) => {
+              const isPreResult = gameStatus === 'idle' || gameStatus === 'deploying' || gameStatus === 'fired';
+              const isResult = gameStatus === 'result';
 
-            {/* --- Missile & Explosion Animations (for both modes) --- */}
+              if ((isPreResult && showDecoyBaseCoords) || isResult) {
+                const isRevealed = isResult;
+                const label = isResult && base.isReal 
+                  ? { value: 'پایگاه اصلی', position: 'top' as LabelPosition, dy: -20, fill: '#22c55e', fontWeight: 'bold' } 
+                  : (isPreResult ? { value: 'مکان پایگاه', position: 'top' as LabelPosition, dy: -20, fill: '#ef4444' } : undefined);
+                
+                return (
+                  <ReferenceDot key={`base-${i}`} x={base.x} y={base.y} r={showGraphics ? 0 : 8} fill={isDark ? '#f87171' : '#dc2626'} ifOverflow="visible" shape={(props: any) => <Tank {...props} isDark={isDark} direction={base.x < symmetryValue ? 'right' : 'left'} isDecoy={true} isRevealed={isRevealed} />} label={label} />
+                );
+              }
+              return null;
+            })}
+            {gameMode === 'decoy' && decoyPlayerPoint && (
+                 <ReferenceDot x={decoyPlayerPoint.x} y={decoyPlayerPoint.y} r={showGraphics ? 0 : 8} fill={isDark ? '#60a5fa' : '#2563eb'} ifOverflow="visible" shape={(props: any) => <MissileLauncher {...props} isDark={isDark} direction={decoyPlayerPoint.x < symmetryValue ? 'right' : 'left'} />} label={{value: `پرتابگر`, position: 'top', dy: -22, fill: '#3b82f6'}} />
+            )}
+
             {missiles.map(m => (
               <React.Fragment key={m.id}>
                 {gameStatus === 'fired' && <ReferenceDot x={m.position.x} y={m.position.y} r={0} ifOverflow="visible" shape={(props: any) => <CustomMissile {...props} angle={m.angle} />} />}
                 {gameStatus === 'result' && <ReferenceDot x={m.target.x} y={m.target.y} r={0} ifOverflow="visible" shape={(props: any) => <CustomExplosion {...props} progress={m.explosionProgress} isHit={m.isHit} />} />}
               </React.Fragment>
             ))}
+
+            {counterAttack && (
+              <React.Fragment>
+                {counterAttack.explosionProgress === null && (
+                  <ReferenceDot x={counterAttack.position.x} y={counterAttack.position.y} r={0} ifOverflow="visible" shape={(props: any) => <CustomShell {...props} isDark={isDark} />} />
+                )}
+                {counterAttack.explosionProgress !== null && (
+                  <ReferenceDot x={counterAttack.target.x} y={counterAttack.target.y} r={0} ifOverflow="visible" shape={(props: any) => <CustomExplosion {...props} progress={counterAttack.explosionProgress} isHit={true} />} />
+                )}
+              </React.Fragment>
+            )}
             
           </ScatterChart>
         </ResponsiveContainer>

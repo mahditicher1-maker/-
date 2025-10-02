@@ -107,6 +107,13 @@ export const playLaunch = () => {
     playNoise(1.5, 0.2, 'bandpass', 100, 4000);
 };
 
+export const playTankFire = () => {
+    initAudioContext();
+    // A sharp, low-pitched sound
+    playTone(150, 0.2, 'sawtooth', 0.5, 100);
+    playNoise(0.2, 0.3, 'bandpass', 200, 500);
+};
+
 export const playHit = () => {
     initAudioContext();
     // Low frequency boom
